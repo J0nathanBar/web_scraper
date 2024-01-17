@@ -1,12 +1,43 @@
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
-const MENU_URL: &str = "https://www.npmjs.com/search?ranking=popularity&q=react";
+use std::fs::{self, File};
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+use std::thread;
+
 const BASE_URL: &str = "https://www.npmjs.com";
+
 fn main() {
+    let mut threads = Vec::new();
+    let file = Arc::new(Mutex::new(
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("res.txt")
+            .unwrap(),
+    ));
+    for i in 0..15 {
+        let link = format!(
+            "https://www.npmjs.com/search?ranking=popularity&q=react&page={}&perPage=20",
+            i
+        );
+        let clone = file.clone();
+        threads.push(thread::spawn(move || get_npm_page_data(&link, clone)));
+    }
+
+    for t in threads {
+        t.join().unwrap();
+    }
+
+    println!("done!");
+}
+
+fn get_npm_page_data(page_link: &str, res_file: Arc<Mutex<File>>) {
+    let mut packages = Vec::new();
     let client = Client::new();
 
     let response = client
-        .get(MENU_URL)
+        .get(page_link)
         .send()
         .expect("failed to fetch menu page");
 
@@ -16,8 +47,7 @@ fn main() {
 
     let option_selector = Selector::parse(".bea55649").expect("invalid selector");
 
-    const N: usize = 100;
-    for (index, option) in document.select(&option_selector).take(N).enumerate() {
+    for option in document.select(&option_selector) {
         if let Some(link) = option.select(&Selector::parse("a").unwrap()).next() {
             // Extract the URL of the linked page from the href attribute
             let extension = link.value().attr("href").unwrap_or_default();
@@ -37,34 +67,12 @@ fn main() {
 
             if let Some(data) = linked_page_document.select(&data_selector).next() {
                 let data_text = data.text().collect::<Vec<_>>().join(" ");
-                println!(
-                    "Data from option {} {}: {}",
-                    index + 1,
-                    extension,
-                    data_text
-                );
+                packages.push(format!("Data from option  {}: {}\n", extension, data_text));
             }
         }
     }
+    let mut file = res_file.lock().unwrap();
+    for package in packages {
+        file.write(package.as_bytes()).unwrap();
+    }
 }
-
-/*
-fn imdb_example() {
-    let response = reqwest::blocking::get(
-        "https://www.imdb.com/search/title/?groups=top_100&sort=user_rating,desc&count=100",
-    )
-    .unwrap()
-    .text()
-    .unwrap();
-
-    let document = scraper::Html::parse_document(&response);
-
-    let title_selector = scraper::Selector::parse("h3.ipc-title__text").unwrap();
-
-    let titles = document.select(&title_selector).map(|x| x.inner_html());
-
-    titles
-        .zip(1..101)
-        .for_each(|(item, number)| println!("{}. {}", number, item));
-}
-*/
