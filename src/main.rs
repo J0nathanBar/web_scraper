@@ -1,19 +1,50 @@
+use futures::{io::repeat, stream, StreamExt};
 use reqwest::Client;
 use scraper::{Html, Selector};
-use std::env;
-use std::fs::{self, File};
-use std::io::Write;
-use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{env, fmt::Error};
 use tokio;
 const BASE_URL: &str = "https://www.npmjs.com";
-
 #[tokio::main]
 async fn main() {
+    let client = Client::new();
     let page_num: Vec<String> = env::args().collect();
     let start_page_num = page_num[1].parse::<usize>().unwrap();
     let end_page_num = page_num[2].parse::<usize>().unwrap();
-    
+    let mut links = Vec::new();
+    for i in start_page_num..end_page_num {
+        links.push(format!(
+            "https://www.npmjs.com/search?ranking=popularity&q=react&page={}&perPage=20",
+            i
+        ));
+    }
+    let bodies = stream::iter(links)
+        .map(|url| {
+            let client = &client;
+            async move {
+                let resp = client.get(&url).send().await?;
+                let body = resp.text().await?;
+                let document = Html::parse_document(&body);
+                let option_selector = Selector::parse(".bea55649").expect("invalid selector");
+                let mut counter = 0;
+                for _ in document.select(&option_selector) {
+                    counter += 1;
+                }
+                if (counter != 20) {
+                    eprintln!("wrong at {}", url)
+                }
+                Ok(counter)
+            }
+        })
+        .buffer_unordered(end_page_num - start_page_num);
+
+    bodies
+        .for_each(|b: Result<i32, reqwest::Error>| async {
+            match b {
+                Ok(b) => println!("got {} options", b),
+                Err(e) => eprintln!("got an error : {}", e),
+            }
+        })
+        .await;
 }
 
 // fn get_npm_page_data(page_link: &str, res_file: Arc<Mutex<File>>) {
@@ -60,3 +91,10 @@ async fn main() {
 //         file.write(package.as_bytes()).unwrap();
 //     }
 // }
+async fn count_options(document: &Html, option_selector: &Selector) -> usize {
+    let mut counter = 0;
+    for _ in document.select(&option_selector) {
+        counter += 1;
+    }
+    counter
+}
