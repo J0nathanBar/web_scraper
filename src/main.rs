@@ -1,5 +1,6 @@
 use reqwest::blocking::Client;
 use scraper::{Html, Selector};
+use std::env;
 use std::fs::{self, File};
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -8,6 +9,9 @@ use std::thread;
 const BASE_URL: &str = "https://www.npmjs.com";
 
 fn main() {
+    let page_num: Vec<String> = env::args().collect();
+    let start_page_num = page_num[1].parse::<usize>().unwrap();
+    let end_page_num = page_num[2].parse::<usize>().unwrap();
     let mut threads = Vec::new();
     let file = Arc::new(Mutex::new(
         fs::OpenOptions::new()
@@ -16,7 +20,7 @@ fn main() {
             .open("res.txt")
             .unwrap(),
     ));
-    for i in 0..15 {
+    for i in start_page_num..end_page_num {
         let link = format!(
             "https://www.npmjs.com/search?ranking=popularity&q=react&page={}&perPage=20",
             i
