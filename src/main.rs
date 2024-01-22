@@ -8,7 +8,7 @@ fn main() {
     let page_num: Vec<String> = env::args().collect();
     let start_page_num = page_num[1].parse::<usize>().unwrap();
     let end_page_num = page_num[2].parse::<usize>().unwrap();
-    let mut packages = Vec::new();
+    //   let mut packages = Vec::new();
 
     let client = Client::new();
     let option_selector = Selector::parse(".bea55649").expect("invalid selector");
@@ -20,17 +20,17 @@ fn main() {
             i
         );
 
-        get_npm_page_data(&link, &client, &mut packages, &option_selector);
-        thread::sleep(Duration::from_millis(5));
+        // get_npm_page_data(&link, &client, &mut packages, &option_selector);
+        save_html_to_pc(&client, &link,i);
     }
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open("le_res.txt")
         .unwrap();
-    for package in packages {
-        file.write(package.as_bytes()).unwrap();
-    }
+    // for package in packages {
+    //     file.write(package.as_bytes()).unwrap();
+    // }
     println!("done!");
 }
 
@@ -40,6 +40,8 @@ fn get_npm_page_data(
     packages: &mut Vec<String>,
     option_selector: &Selector,
 ) {
+    //thread::sleep(Duration::from_secs(1));
+
     let response = client
         .get(page_link)
         .send()
@@ -49,7 +51,6 @@ fn get_npm_page_data(
     let document = Html::parse_document(&body);
 
     for option in document.select(&option_selector) {
-        thread::sleep(Duration::from_secs(2));
         get_npm_package(option, client, packages);
     }
 }
@@ -59,6 +60,7 @@ fn get_npm_package(option: ElementRef<'_>, client: &Client, packages: &mut Vec<S
         // Extract the URL of the linked page from the href attribute
         let extension = link.value().attr("href").unwrap_or_default();
         let linked_page_url = format!("{}/{}", BASE_URL, extension);
+        thread::sleep(Duration::from_secs(1));
 
         let linked_page_resopnse = client
             .get(&linked_page_url)
@@ -81,4 +83,16 @@ fn get_npm_package(option: ElementRef<'_>, client: &Client, packages: &mut Vec<S
     } else {
         println!("fuckkk! in the og selection")
     }
+}
+
+fn save_html_to_pc(client: &Client, page_link: &str,index:usize) {
+    let response = client
+        .get(page_link)
+        .send()
+        .expect("failed to fetch menu page");
+
+    let body = response.text().expect("failed to extract html");
+    let pathh = format!("htmls/menu_pages/{}.html", index);
+    fs::write(pathh, body).unwrap();
+    thread::sleep(Duration::from_secs(1));
 }
