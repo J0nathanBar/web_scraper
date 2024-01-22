@@ -1,4 +1,7 @@
-use reqwest::{blocking::Client, Body};
+use reqwest::{
+    blocking::{Client, Response},
+    Body,
+};
 use scraper::{ElementRef, Html, Selector};
 use std::{env, fs, io::Write, thread, time::Duration};
 
@@ -61,10 +64,16 @@ fn download_packages(client: &Client, page_link: &str) {
     let mut body: String;
     let mut counter = 0;
     loop {
-        let response = client
-            .get(page_link)
-            .send()
-            .expect("failed to fetch menu page");
+        let response: Response;
+        loop {
+            match client.get(page_link).send() {
+                Ok(resp) => {
+                    response = resp;
+                    break;
+                }
+                _ => thread::sleep(Duration::from_millis(2)),
+            }
+        }
 
         body = response.text().expect("failed to extract html");
         if body.len() > ERROR_LENGTH {
