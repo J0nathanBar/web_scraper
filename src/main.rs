@@ -1,7 +1,7 @@
-use futures::{io::repeat, stream, StreamExt};
+use futures::{stream, StreamExt};
 use reqwest::Client;
 use scraper::{Html, Selector};
-use std::{env, fmt::Error};
+use std::{env, fs, io::Write};
 use tokio;
 const BASE_URL: &str = "https://www.npmjs.com";
 #[tokio::main]
@@ -19,82 +19,71 @@ async fn main() {
     }
     let bodies = stream::iter(links)
         .map(|url| {
-            let client = &client;
+            let client = client.clone();
             async move {
                 let resp = client.get(&url).send().await?;
                 let body = resp.text().await?;
-                let document = Html::parse_document(&body);
-                let option_selector = Selector::parse(".bea55649").expect("invalid selector");
-                let mut counter = 0;
-                for _ in document.select(&option_selector) {
-                    counter += 1;
-                }
-                if (counter != 20) {
-                    eprintln!("wrong at {}", url)
-                }
-                Ok(counter)
+
+                get_options(client, body).await
             }
         })
         .buffer_unordered(end_page_num - start_page_num);
 
     bodies
-        .for_each(|b: Result<i32, reqwest::Error>| async {
+        .for_each(|b| async {
             match b {
-                Ok(b) => println!("got {} options", b),
+                Ok(b) if b.0.len() != 20 => {
+                  //  println!("fuckk we gott {}", b.0.len());
+                //    fs::write(format!("test{}.html", b.0.len()), b.1).unwrap();
+                }
+
+                Ok(b) => {
+                    let mut file = fs::OpenOptions::new()
+                        .append(true)
+                        .create(true)
+                        .open("res.txt")
+                        .unwrap();
+                    for package in b.0 {
+                        file.write(package.as_bytes()).unwrap();
+                    }
+                }
                 Err(e) => eprintln!("got an error : {}", e),
             }
         })
         .await;
 }
 
-// fn get_npm_page_data(page_link: &str, res_file: Arc<Mutex<File>>) {
-//     let mut packages = Vec::new();
-//     let client = Client::new();
+async fn get_options(
+    client: Client,
 
-//     let response = client
-//         .get(page_link)
-//         .send()
-//         .expect("failed to fetch menu page");
+    og_body: String,
+) -> Result<(Vec<String>, String), reqwest::Error> {
+    let mut packages = Vec::new();
+    let document = Html::parse_document(&og_body);
+    let option_selector = Selector::parse(".bea55649").unwrap();
+    let ves: Vec<_> = document.select(&option_selector).collect();
+    println!("ves is {}", ves.len());
+    // for option in document.select(&option_selector) {
+    //     let link = option
+    //         .select(&Selector::parse("a").unwrap())
+    //         .next()
+    //         .unwrap();
+    //     // Extract the URL of the linked page from the href attribute
+    //     let extension = link.value().attr("href").unwrap_or_default();
+    //     let linked_page_url = format!("{}/{}", BASE_URL, extension);
 
-//     let body = response.text().expect("failed to extract html");
-//     //  println!("le body: {}", &body);
-//     let document = Html::parse_document(&body);
+    //     let linked_page_resopnse = client.get(&linked_page_url).send().await?;
 
-//     let option_selector = Selector::parse(".bea55649").expect("invalid selector");
+    //     let linked_page_body = linked_page_resopnse.text().await?;
+    //     let linked_page_document = Html::parse_document(&linked_page_body);
 
-//     for option in document.select(&option_selector) {
-//         if let Some(link) = option.select(&Selector::parse("a").unwrap()).next() {
-//             // Extract the URL of the linked page from the href attribute
-//             let extension = link.value().attr("href").unwrap_or_default();
-//             let linked_page_url = format!("{}/{}", BASE_URL, extension);
+    //     let data_selector = Selector::parse("._9ba9a726").unwrap();
 
-//             let linked_page_resopnse = client
-//                 .get(&linked_page_url)
-//                 .send()
-//                 .expect("failed to fetch linked page");
+    //     if let Some(data) = linked_page_document.select(&data_selector).next() {
+    //         let data_text = data.text().collect::<Vec<_>>().join(" ");
+    //         packages.push(format!("Data from option  {}: {}\n", extension, data_text));
+    //     }
+    // }
 
-//             let linked_page_body = linked_page_resopnse
-//                 .text()
-//                 .expect("failed to fetch linked body");
-//             let linked_page_document = Html::parse_document(&linked_page_body);
-
-//             let data_selector = Selector::parse("._9ba9a726").expect("invalid selector");
-
-//             if let Some(data) = linked_page_document.select(&data_selector).next() {
-//                 let data_text = data.text().collect::<Vec<_>>().join(" ");
-//                 packages.push(format!("Data from option  {}: {}\n", extension, data_text));
-//             }
-//         }
-//     }
-//     let mut file = res_file.lock().unwrap();
-//     for package in packages {
-//         file.write(package.as_bytes()).unwrap();
-//     }
-// }
-async fn count_options(document: &Html, option_selector: &Selector) -> usize {
-    let mut counter = 0;
-    for _ in document.select(&option_selector) {
-        counter += 1;
-    }
-    counter
+    Ok((packages, og_body))
 }
