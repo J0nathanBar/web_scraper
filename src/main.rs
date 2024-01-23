@@ -1,20 +1,23 @@
+use futures::{stream, StreamExt};
 use reqwest::{
     blocking::{Client, Response},
     Body, Error, Request,
 };
 use scraper::{ElementRef, Html, Selector};
 use std::{env, fs, io::Write, path, thread, time::Duration, usize};
-
+use tokio;
 const BASE_URL: &str = "https://www.npmjs.com";
 const ERROR_LENGTH: usize = 20 * 1024;
 const DOWNLOAD_LIMIT: usize = 100000;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // let page_num: Vec<String> = env::args().collect();
     // let start_page_num = page_num[1].parse::<usize>().unwrap();
     // let end_page_num = page_num[2].parse::<usize>().unwrap();
     // // iterate_pages(start_page_num, end_page_num);
-    iterate_packages();
+
+    iterate_packages().await;
 }
 
 fn save_html_to_pc(client: &Client, page_link: &str, index: usize) {
@@ -94,37 +97,63 @@ fn extract_body(client: &Client, page_link: &str) -> Result<String, reqwest::Err
     Ok(body)
 }
 
-fn iterate_packages() {
-    let client = Client::new();
-    let packages = fs::read_dir("htmls/packages").unwrap();
-
-    let data_selector = Selector::parse("._9ba9a726").expect("invalid selector");
-    //let name_selector = Selector::parse("._50685029").unwrap();
-    let git_selector =
-        Selector::parse("a[aria-labelledby=\"repository repository-link\"]").unwrap();
-    for (index, package) in packages.enumerate() {
-        let path = package.unwrap().path();
-        let package_body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
-        let document = Html::parse_document(&package_body);
-        // let package_name = get_package_name(&document, &name_selector);
-        let downloads = extract_package_downloads(&data_selector, &document);
-        match downloads {
-            Some(downloads) if downloads > DOWNLOAD_LIMIT => {
-                if let Some(git) = extract_git_hub_page(&document, &git_selector) {
-                    match extract_body(&client, &git) {
-                        Ok(b) if b.len() > ERROR_LENGTH => {
-                            println!("whoohoo we're at {index}")
+async fn iterate_packages() {
+    let client = reqwest::Client::new();
+    let links = get_git_links();
+    println!("got them linkies");
+    let bodies = stream::iter(links)
+        .map(|link| {
+            let client = client.clone();
+            async move {
+                let mut counter = 0;
+                loop {
+                    let body = extract_body_async(&client, link.as_str()).await;
+                    if let Ok(body) = body {
+                        if counter > 1 {
+                            println!("oh look problem solved after {counter} iterations");
                         }
-                        _ => {
-                            eprintln!("we reached limit at : {index}");
-                            break;
-                        }
+                        return Ok(body);
+                    } else if counter > 5 {
+                        return Err(format!("sorry bro i tried "));
                     }
+                    counter += 1;
+                    thread::sleep(Duration::from_millis(3));
                 }
             }
-            _ => {}
-        }
-    }
+        })
+        .buffer_unordered(6000);
+    bodies
+        .for_each(|b| async {
+            match b {
+                Ok(b) => println!("Got {} ", b.len()),
+                Err(e) => eprintln!("Got an error: {}", e),
+            }
+        })
+        .await;
+
+    // for (index, package) in packages.enumerate() {
+    //     let path = package.unwrap().path();
+    //     let package_body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+    //     let document = Html::parse_document(&package_body);
+    //     // let package_name = get_package_name(&document, &name_selector);
+    //     let downloads = extract_package_downloads(&data_selector, &document);
+    //     match downloads {
+    //         Some(downloads) if downloads > DOWNLOAD_LIMIT => {
+    //             if let Some(git) = extract_git_hub_page(&document, &git_selector) {
+    //                 match extract_body_async(client.clone(), &git).await {
+    //                     Ok(b) if b.len() > ERROR_LENGTH => {
+    //                         println!("whoohoo we're at {index}")
+    //                     }
+    //                     _ => {
+    //                         eprintln!("we reached limit at : {index}");
+    //                         break;
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //         _ => {}
+    //     }
+    // }
 }
 
 fn extract_package_downloads(data_selector: &Selector, document: &Html) -> Option<usize> {
@@ -148,4 +177,37 @@ fn get_package_name(document: &Html, name_selector: &Selector) -> String {
         .text()
         .collect::<Vec<_>>()
         .join("")
+}
+
+async fn extract_body_async(
+    client: &reqwest::Client,
+    page_link: &str,
+) -> Result<String, reqwest::Error> {
+    let response = client.get(page_link).send().await?;
+    let body = response.text().await?;
+    Ok(body)
+}
+
+fn get_git_links() -> Vec<String> {
+    let data_selector = Selector::parse("._9ba9a726").expect("invalid selector");
+    //let name_selector = Selector::parse("._50685029").unwrap();
+    let git_selector =
+        Selector::parse("a[aria-labelledby=\"repository repository-link\"]").unwrap();
+    fs::read_dir("htmls/packages")
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            let package_body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+            let document = Html::parse_document(&package_body);
+            let downloads = extract_package_downloads(&data_selector, &document);
+            if let Some(downloads) = downloads {
+                if downloads > DOWNLOAD_LIMIT {
+                    if let Some(git_link) = extract_git_hub_page(&document, &git_selector) {
+                        return Some(git_link);
+                    }
+                }
+            }
+            None
+        })
+        .collect()
 }
