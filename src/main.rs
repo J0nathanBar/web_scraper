@@ -1,19 +1,20 @@
 use reqwest::{
     blocking::{Client, Response},
-    Body, Request,
+    Body, Error, Request,
 };
 use scraper::{ElementRef, Html, Selector};
-use std::{env, fs, io::Write, path, thread, time::Duration};
+use std::{env, fs, io::Write, path, thread, time::Duration, usize};
 
 const BASE_URL: &str = "https://www.npmjs.com";
 const ERROR_LENGTH: usize = 20 * 1024;
+const DOWNLOAD_LIMIT: usize = 100000;
 
 fn main() {
-    let page_num: Vec<String> = env::args().collect();
-    let start_page_num = page_num[1].parse::<usize>().unwrap();
-    let end_page_num = page_num[2].parse::<usize>().unwrap();
-    iterate_pages(start_page_num, end_page_num);
-    //iterate_packages();
+    // let page_num: Vec<String> = env::args().collect();
+    // let start_page_num = page_num[1].parse::<usize>().unwrap();
+    // let end_page_num = page_num[2].parse::<usize>().unwrap();
+    // // iterate_pages(start_page_num, end_page_num);
+    iterate_packages();
 }
 
 fn save_html_to_pc(client: &Client, page_link: &str, index: usize) {
@@ -94,6 +95,57 @@ fn extract_body(client: &Client, page_link: &str) -> Result<String, reqwest::Err
 }
 
 fn iterate_packages() {
-    let paths: Vec<_> = fs::read_dir("htmls/packages").unwrap().collect();
-    println!("{}", paths.len());
+    let client = Client::new();
+    let packages = fs::read_dir("htmls/packages").unwrap();
+
+    let data_selector = Selector::parse("._9ba9a726").expect("invalid selector");
+    //let name_selector = Selector::parse("._50685029").unwrap();
+    let git_selector =
+        Selector::parse("a[aria-labelledby=\"repository repository-link\"]").unwrap();
+    for (index, package) in packages.enumerate() {
+        let path = package.unwrap().path();
+        let package_body = String::from_utf8(fs::read(&path).unwrap()).unwrap();
+        let document = Html::parse_document(&package_body);
+        // let package_name = get_package_name(&document, &name_selector);
+        let downloads = extract_package_downloads(&data_selector, &document);
+        match downloads {
+            Some(downloads) if downloads > DOWNLOAD_LIMIT => {
+                if let Some(git) = extract_git_hub_page(&document, &git_selector) {
+                    match extract_body(&client, &git) {
+                        Ok(b) if b.len() > ERROR_LENGTH => {
+                            println!("whoohoo we're at {index}")
+                        }
+                        _ => {
+                            eprintln!("we reached limit at : {index}");
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn extract_package_downloads(data_selector: &Selector, document: &Html) -> Option<usize> {
+    if let Some(data) = document.select(&data_selector).next() {
+        let data_text = data.text().collect::<Vec<_>>().join(" ");
+        return Some(data_text.replace(",", "").parse::<usize>().unwrap());
+    }
+    None
+}
+
+fn extract_git_hub_page(document: &Html, git_selector: &Selector) -> Option<String> {
+    let git_tag = document.select(&git_selector).next()?;
+    Some(String::from(git_tag.attr("href")?))
+}
+
+fn get_package_name(document: &Html, name_selector: &Selector) -> String {
+    document
+        .select(&name_selector)
+        .next()
+        .unwrap()
+        .text()
+        .collect::<Vec<_>>()
+        .join("")
 }
