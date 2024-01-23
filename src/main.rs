@@ -1,9 +1,9 @@
 use reqwest::{
     blocking::{Client, Response},
-    Body,
+    Body, Request,
 };
 use scraper::{ElementRef, Html, Selector};
-use std::{env, fs, io::Write, thread, time::Duration};
+use std::{env, fs, io::Write, path, thread, time::Duration};
 
 const BASE_URL: &str = "https://www.npmjs.com";
 const ERROR_LENGTH: usize = 20 * 1024;
@@ -13,6 +13,7 @@ fn main() {
     let start_page_num = page_num[1].parse::<usize>().unwrap();
     let end_page_num = page_num[2].parse::<usize>().unwrap();
     iterate_pages(start_page_num, end_page_num);
+    //iterate_packages();
 }
 
 fn save_html_to_pc(client: &Client, page_link: &str, index: usize) {
@@ -48,7 +49,7 @@ fn iterate_pages(start_page_num: usize, end_page_num: usize) {
     let client = Client::new();
 
     for (index, package) in packages.iter().enumerate() {
-        println!("{index}");
+        println!("{index}/{}", packages.len());
         download_packages(&client, &package);
     }
 }
@@ -61,30 +62,38 @@ fn download_packages(client: &Client, page_link: &str) {
         return;
     }
 
-    let mut body: String;
+    let body: String;
     let mut counter = 0;
     loop {
-        let response: Response;
-        loop {
-            match client.get(page_link).send() {
-                Ok(resp) => {
-                    response = resp;
-                    break;
-                }
-                _ => thread::sleep(Duration::from_millis(2)),
+        match extract_body(client, page_link) {
+            Ok(b) if b.len() > ERROR_LENGTH => {
+                body = b;
+                break;
             }
-        }
-
-        body = response.text().expect("failed to extract html");
-        if body.len() > ERROR_LENGTH {
-            break;
-        }
-        counter += 1;
-        thread::sleep(Duration::from_secs(10));
-        if counter > 5 {
-            println!("boys we're into the deep shit");
-            thread::sleep(Duration::from_secs(120));
+            Ok(_) => {
+                counter += 1;
+                thread::sleep(Duration::from_secs(3));
+                if counter > 5 {
+                    println!("deep shit");
+                    thread::sleep(Duration::from_secs(60))
+                };
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                counter += 1;
+                thread::sleep(Duration::from_secs(60))
+            }
         }
     }
     fs::write(pathh, body).unwrap();
+}
+fn extract_body(client: &Client, page_link: &str) -> Result<String, reqwest::Error> {
+    let response = client.get(page_link).send()?;
+    let body = response.text()?;
+    Ok(body)
+}
+
+fn iterate_packages() {
+    let paths: Vec<_> = fs::read_dir("htmls/packages").unwrap().collect();
+    println!("{}", paths.len());
 }
